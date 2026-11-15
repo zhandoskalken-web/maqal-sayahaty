@@ -80,7 +80,7 @@
     if (d >= DAYS || d !== doneDays()) return 'lock';
     const w = Math.floor(d / 5);
     if (w > 0 && !passed(w - 1)) return 'lock';
-    if (!me.demo && Object.values(U.days).some((x) => x.date === today())) return 'wait';
+    if (DAILY_LIMIT && !me.demo && Object.values(U.days).some((x) => x.date === today())) return 'wait';
     return 'now';
   }
   function examState(w) {
@@ -162,7 +162,9 @@
     },
 
     rank() {
-      const all = ACCOUNTS.filter((a) => !a.demo || a.login === me.login).map((a) => {
+      const accs = ACCOUNTS.filter((a) => !a.demo || a.login === me.login);
+      if (!accs.some((a) => a.login === me.login)) accs.push(me);
+      const all = accs.map((a) => {
         const u = a.login === me.login ? U : store.get('u.' + a.login);
         return { a: a, xp: u ? u.xp : 0, prov: u ? Object.keys(u.days || {}).length * 7 : 0 };
       }).sort((x, y) => y.xp - x.xp || y.prov - x.prov);
@@ -236,7 +238,7 @@
   // ═══════════════ Сабақ пен емтихан ═══════════════
   function startLesson(d, replay) {
     const ps = dayProv(d);
-    S = { kind: 'lesson', d: d, replay: replay, ps: ps, stages: STAGES.map((st) => shuffle(ps).map((p) => ({ type: st.type, p: p }))), si: 0, done: 0, total: ps.length * STAGES.length, xp: 0, asyk: 0, first: 0, answered: 0 };
+    S = { kind: 'lesson', d: d, replay: replay, ps: ps, stages: STAGES.map((st) => shuffle(ps).map((p) => ({ type: st.type, p: p }))), si: 0, done: 0, total: ps.length * STAGES.length, xp: 0, asyk: 0, first: 0, answered: 0, st: STAGES.map(() => 0) };
     S.queue = S.stages[0].slice();
     stageIntro();
   }
@@ -306,6 +308,7 @@
     let gain = '';
     if (S.kind === 'lesson') {
       if (ok && !c.it.missed) {
+        S.st[S.si]++;
         const xp = S.replay ? 2 : 10, as = S.replay ? 0 : 1;
         S.xp += xp; S.asyk += as; S.first++; gain = `+${xp} ұпай` + (as ? ` · ${em(ASYK)}+${as}` : '');
       }
@@ -343,11 +346,13 @@
     }
     earn(S.xp, S.asyk + bonus); save();
     const acc = Math.round(100 * S.first / S.total);
+    const ask4 = first && SURVEY_ON && SURVEY.lesson && SURVEY.lesson.length > 0;
+    if (ask4) SV = { kind: 'lesson', qs: SURVEY.lesson, lesson: d + 1, score: S.first, total: S.total, stages: S.st.slice(), cls: svCls(), a: {} };
     app.innerHTML = `<div class="play done">
       <div class="result">${em(first ? '🏆' : '⭐', 'huge')}<h2>${esc(stopName(d))} ${first ? 'аялдамасы өтілді!' : '— қайталау аяқталды'}</h2>
         <div class="rstats"><div><b>${S.xp}</b><span>ұпай</span></div><div><b>${em(ASYK)}${S.asyk + bonus}</b><span>асық</span></div><div><b>${acc}%</b><span>дәлдік</span></div><div><b>${em('🔥')}${streakNow()}</b><span>күн</span></div></div></div>
       <h3 class="sec">Бүгінгі 7 мақал</h3>${provList(S.ps)}
-      <div class="foot"><button class="btn primary wide" data-act="tomap">КАРТАҒА ОРАЛУ</button></div></div>`;
+      <div class="foot">${ask4 ? '<button class="btn primary wide" data-act="survey">ЖАЛҒАСТЫРУ</button>' : '<button class="btn primary wide" data-act="tomap">КАРТАҒА ОРАЛУ</button>'}</div></div>`;
     S = null; window.scrollTo(0, 0);
   }
 
@@ -374,6 +379,60 @@
 
   const provList = (ps) => `<div class="plist">${ps.map((p) => `<div class="card pi">${code(p.e, 'xs')}<b>${esc(p.t)}</b><span>${esc(p.m)}</span></div>`).join('')}</div>`;
 
+  // ═══════════════ Сервер мен сауалнама ═══════════════
+  // Сауалнамада есім мен логин жіберілмейді: тек түрі (start/lesson), сынып, сабақ нәтижесі және жауаптар.
+  const ONLINE = typeof SERVER !== 'undefined' && SERVER.url && SERVER.key;
+  const SURVEY_ON = ONLINE && typeof SURVEY !== 'undefined' && SURVEY.on;
+  let SV = null;
+  async function api(path, body) {
+    const r = await fetch(SERVER.url + '/rest/v1/' + path, {
+      method: 'POST',
+      headers: { apikey: SERVER.key, Authorization: 'Bearer ' + SERVER.key, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const t = await r.text();
+    return t ? JSON.parse(t) : null;
+  }
+  const svCls = () => (me.demo ? store.get('survey.cls') || '' : me.cls);
+  function surveyView() {
+    const askCls = me.demo, n0 = askCls ? 2 : 1;
+    const chips = (qid, list) => `<div class="svopts">${list.map((v) => `<button type="button" class="opt sv${SV.a[qid] === v || (qid === '_cls' && SV.cls === v) ? ' on' : ''}" data-act="sv" data-q="${esc(qid)}" data-v="${esc(v)}">${esc(v)}</button>`).join('')}</div>`;
+    const qs = SV.qs.map((q, i) => `<div class="card svq"><b>${i + n0}. ${esc(q.q)}</b>${q.type === 'text'
+      ? `<textarea id="sv-${esc(q.id)}" maxlength="500" rows="3">${esc(SV.a[q.id] || '')}</textarea>`
+      : chips(q.id, q.opts)}</div>`).join('');
+    const ready = SV.cls && SV.qs.every((q) => q.type === 'text' || SV.a[q.id]);
+    const start = SV.kind === 'start';
+    app.innerHTML = `<div class="play done survey">
+      <div class="result">${em('📝', 'huge')}<h2>${start ? 'Сапар алдында бірнеше сұрақ' : 'Бір минуттық сауалнама'}</h2><p>${start ? 'Жауабың жобаны жақсартуға көмектеседі.' : 'Сабақ туралы пікірің маңызды.'} Атың жазылмайды.</p></div>
+      <div class="svlist">${askCls ? `<div class="card svq"><b>1. Сыныбың</b>${chips('_cls', SURVEY.classes)}</div>` : ''}${qs}</div>
+      <div class="foot"><button class="btn primary wide" data-act="sv-send" ${ready ? '' : 'disabled'}>${start ? 'ЖІБЕРІП, САПАРҒА ШЫҒУ' : 'ЖІБЕРУ'}</button><button class="btn wide" data-act="sv-skip">Өткізіп жіберу</button></div></div>`;
+  }
+  function svKeepText() {
+    SV.qs.forEach((q) => { const t = $('#sv-' + q.id); if (t) SV.a[q.id] = t.value.trim(); });
+  }
+  function svDone(how) { // сауалнамадан кейін картаға
+    if (SV && SV.kind === 'start') { U.startSurvey = how; save(); }
+    SV = null; go('map');
+  }
+  async function svFlush() { // интернет болмай жіберілмей қалғандарын қайта жіберу
+    const pend = store.get('survey.pending') || [];
+    if (!pend.length || !SURVEY_ON) return;
+    const left = [];
+    for (const row of pend) { try { await api('survey', row); } catch (e) { left.push(row); } }
+    store.set('survey.pending', left);
+  }
+  async function svSend() {
+    svKeepText();
+    const row = { kind: SV.kind, cls: SV.cls, lesson: SV.lesson || null, score: SV.score == null ? null : SV.score, stages: SV.stages ? { total: SV.total, by_stage: SV.stages } : null, answers: SV.a };
+    if (me.demo) store.set('survey.cls', SV.cls);
+    svDone('sent');
+    try { await api('survey', row); toast('Рахмет! Жауабың жіберілді.'); } catch (e) {
+      const pend = store.get('survey.pending') || []; pend.push(row); store.set('survey.pending', pend);
+      toast('Рахмет! Интернет қосылғанда жауабың өзі жіберіледі.');
+    }
+  }
+
   // ═══════════════ Кіру ═══════════════
   function loginView(msg) {
     document.body.classList.add('playing'); tabsEl.hidden = true;
@@ -388,9 +447,14 @@
         <p class="hint">Логин мен құпия сөзді мұғалімің береді.</p>
       </form></div>`;
   }
-  function login(l) {
-    me = ACCOUNTS.find((a) => a.login === l); U = loadUser(me.login);
-    store.set('session', me.login); go('map');
+  function login(acc) {
+    me = { login: acc.login, name: acc.name, cls: acc.cls, demo: !!acc.demo }; U = loadUser(me.login);
+    store.set('session', me);
+    if (SURVEY_ON && SURVEY.start && SURVEY.start.length && !U.startSurvey) {
+      SV = { kind: 'start', qs: SURVEY.start, cls: svCls(), a: {} };
+      return surveyView();
+    }
+    go('map');
   }
 
   // ═══════════════ Оқиғалар ═══════════════
@@ -427,6 +491,14 @@
     },
     next() { next(); },
     tomap() { go('map'); },
+    survey() { if (SV) surveyView(); else go('map'); },
+    sv(d) {
+      svKeepText();
+      if (d.q === '_cls') SV.cls = d.v; else SV.a[d.q] = d.v;
+      const y = window.scrollY; surveyView(); window.scrollTo(0, y);
+    },
+    'sv-send'() { if (SV) svSend(); },
+    'sv-skip'() { svDone('skipped'); },
     learned() {
       const ps = Object.keys(U.days).map(Number).sort((a, b) => a - b).flatMap(dayProv);
       app.innerHTML = topbar() + `<div class="page"><button class="back" data-go="stats">‹ Жетістік</button><h3 class="sec">Жаттаған мақалдарым · ${ps.length}</h3>${ps.length ? provList(ps) : '<p class="note">Алғашқы сабақты өткен соң мақалдар осында жиналады.</p>'}</div>`;
@@ -447,17 +519,25 @@
     const a = e.target.closest('[data-act]');
     if (a && !a.disabled && ACT[a.dataset.act]) ACT[a.dataset.act](a.dataset, a);
   });
-  document.addEventListener('submit', (e) => {
+  document.addEventListener('submit', async (e) => {
     if (e.target.id !== 'lform') return;
     e.preventDefault();
     const l = $('#lg').value.trim().toLowerCase(), p = $('#pw').value;
+    const bad = 'Логин немесе құпия сөз қате.';
     const a = ACCOUNTS.find((x) => x.login.toLowerCase() === l);
-    if (!a || a.pass !== p) return loginView('Логин немесе құпия сөз қате.');
-    login(a.login);
+    if (a) return a.pass === p ? login(a) : loginView(bad);
+    if (!ONLINE) return loginView(bad);
+    const btn = $('#lform button'); btn.disabled = true; btn.textContent = 'ТЕКСЕРІЛУДЕ…';
+    try {
+      const r = await api('rpc/pupil_login', { p_login: l, p_pass: p });
+      if (r && r.login) login(r); else loginView(bad);
+    } catch (err) { loginView('Серверге қосылу мүмкін болмады. Интернетті тексеріп, қайта байқап көр.'); }
   });
 
   // ═══════════════ Іске қосу ═══════════════
   document.title = APP_NAME;
-  const sess = store.get('session');
-  if (sess && ACCOUNTS.some((a) => a.login === sess)) login(sess); else loginView();
+  let sess = store.get('session');
+  if (typeof sess === 'string') sess = ACCOUNTS.find((a) => a.login === sess); // ескі нұсқадан қалған сессия
+  if (sess && sess.login) login(sess); else loginView();
+  svFlush();
 })();
