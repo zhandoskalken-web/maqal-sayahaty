@@ -294,3 +294,19 @@ body.teacher #app { max-width: 1100px; }
 .ttab th.srt:hover { background: #1a4766; }
 .ttab th.srt i { font-style: normal; margin-left: 5px; opacity: .45; font-size: 11px; }
 .ttab th.srt.on i { opacity: 1; color: var(--gold); }
+
+/* мұғалім беті: бөлімдер мен сауалнама есебі */
+.ttabs { display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 2px solid var(--line); }
+.ttabs button { border: 0; background: none; padding: 9px 14px; font: inherit; font-weight: 800; color: var(--muted); border-bottom: 3px solid transparent; margin-bottom: -2px; }
+.ttabs button.on { color: var(--navy); border-bottom-color: var(--teal); }
+.sq { margin-bottom: 10px; }
+.sq > b { display: block; color: var(--navy); font-size: 15px; }
+.sq > small { display: block; color: var(--muted); margin: 2px 0 10px; }
+.bars { display: grid; gap: 6px; }
+.br { display: grid; grid-template-columns: minmax(70px, 140px) 1fr 84px; align-items: center; gap: 10px; font-size: 14px; }
+.bl { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt { height: 14px; background: #efe9dc; border-radius: 4px; overflow: hidden; }
+.bt i { display: block; height: 100%; background: var(--teal); border-radius: 0 4px 4px 0; min-width: 2px; }
+.br:hover .bt i { background: var(--navy); }
+.bv { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sqtext { margin: 0; padding-left: 18px; font-size: 14px; display: grid; gap: 4px; }

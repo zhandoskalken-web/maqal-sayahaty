@@ -492,7 +492,8 @@
   // ═══════════════ Мұғалім беті ═══════════════
   // Мұғалім логинімен кіргенде: сынып оқушыларының прогресі (өз сыныбы немесе admin — барлығы).
   let TR = null;
-  const TF = { cls: '', per: 'all', sort: '', dir: 1 };
+  let TS = null; // сауалнама жауаптары
+  const TF = { tab: 'pupils', cls: '', per: 'all', sort: '', dir: 1 };
   // Бағандар: [кілт, атауы, сұрыптау мәні]. Мәтін — А→Я, сандар — үлкенінен бастап.
   const TCOLS = [['name', 'Оқушы', (r) => r.name], ['cls', 'Сынып', (r) => r.cls], ['les', 'Сабақ', (r) => r.les], ['prov', 'Мақал', (r) => r.prov],
     ['xp', 'Ұпай', (r) => r.xp], ['lv', 'Деңгей', (r) => r.lvl], ['ex', 'Емтихандар (ең жақсы)', (r) => r.exSum], ['last', 'Соңғы белсенділік', (r) => (r.started && r.last ? r.last.getTime() : 0)]];
@@ -506,9 +507,9 @@
   async function teacherLoad() {
     app.innerHTML = '<div class="loading">Нәтижелер жүктелуде…</div>';
     try {
-      const r = await api('rpc/teacher_report', { p_token: me.token });
+      const [r, sv] = await Promise.all([api('rpc/teacher_report', { p_token: me.token }), api('rpc/teacher_survey', { p_token: me.token }).catch(() => undefined)]);
       if (!r) { document.body.classList.remove('teacher'); return relogin(); }
-      TR = r; teacherView();
+      TR = r; TS = sv === undefined ? undefined : sv || []; teacherView();
     } catch (e) {
       app.innerHTML = '<div class="tview"><p class="err">Серверге қосылу мүмкін болмады.</p><button class="btn" data-act="tr-reload">Қайта көру</button> <button class="btn" data-act="logout">Шығу</button></div>';
     }
@@ -547,15 +548,72 @@
     const chip = (k, v, label) => `<button type="button" class="opt sv${TF[k] === v ? ' on' : ''}" data-act="tr-f" data-k="${k}" data-v="${esc(v)}">${esc(label)}</button>`;
     app.innerHTML = `<div class="tview">
       <header class="thead"><div><small>Мұғалім беті · ${esc(APP_NAME)}</small><h2>${esc(me.name)}</h2></div><button class="btn sm" data-act="tr-reload">Жаңарту</button><button class="btn sm" data-act="logout">Шығу</button></header>
+      <div class="ttabs">${[['pupils', 'Оқушылар'], ['survey', 'Сауалнама']].map((t) => `<button type="button" class="${TF.tab === t[0] ? 'on' : ''}" data-act="tr-f" data-k="tab" data-v="${t[0]}">${t[1]}</button>`).join('')}</div>
       ${me.cls ? '' : `<div class="svopts">${chip('cls', '', 'Барлық сынып')}${classes.map((c) => chip('cls', c, c)).join('')}</div>`}
       <div class="svopts">${TPER.map((p) => chip('per', p[0], p[1])).join('')}</div>
-      <div class="tsum"><div class="card"><b>${rows.length}</b><span>оқушы</span></div><div class="card"><b>${started}</b><span>сайтқа кірді</span></div>
+      ${TF.tab === 'survey' ? surveyReport(classes) : pupilsReport(rows, started, active, avg, perName)}</div>`;
+  }
+  function pupilsReport(rows, started, active, avg, perName) {
+    return `<div class="tsum"><div class="card"><b>${rows.length}</b><span>оқушы</span></div><div class="card"><b>${started}</b><span>сайтқа кірді</span></div>
         <div class="card"><b>${active}</b><span>сабақ өтті · ${esc(perName)}</span></div><div class="card"><b>${avg}</b><span>бір оқушыға орташа сабақ</span></div></div>
       <div class="twrap"><table class="ttab"><thead><tr><th>№</th>${TCOLS.map((c) => `<th class="srt${TF.sort === c[0] ? ' on' : ''}" data-act="tr-sort" data-k="${c[0]}" title="Сұрыптау">${c[1]}<i>${TF.sort === c[0] ? (TF.dir > 0 ? '▲' : '▼') : '⇅'}</i></th>`).join('')}</tr></thead><tbody>
       ${rows.map((r, i) => `<tr class="${r.started ? '' : 'off'}"><td>${i + 1}</td><td><b>${esc(r.name)}</b><small>${esc(r.login)}</small></td><td>${esc(r.cls)}</td><td>${r.les}</td><td>${r.prov}</td><td>${r.xp}</td><td>${r.lv}</td><td>${esc(r.ex || '—')}</td><td>${r.started ? tfmt(r.last) : 'кірмеген'}</td></tr>`).join('')}
       </tbody></table></div>
       <div class="tfoot"><button class="btn primary" data-act="tr-csv">Excel-ге жүктеу (CSV)</button>
-        <p class="note">Сабақ, мақал және ұпай таңдалған кезең бойынша есептеледі. «Кірмеген» — жеке логинмен әлі кірмеген оқушы. Нәтиже оқушы әр сабақты бітірген сайын жаңарады; бетті жаңарту үшін «Жаңарту» батырмасын басыңыз.</p></div></div>`;
+        <p class="note">Сабақ, мақал және ұпай таңдалған кезең бойынша есептеледі. «Кірмеген» — жеке логинмен әлі кірмеген оқушы. Нәтиже оқушы әр сабақты бітірген сайын жаңарады; бетті жаңарту үшін «Жаңарту» батырмасын басыңыз.</p></div>`;
+  }
+
+  // Сауалнама есебі: әр сұрақтың жауаптары — бір түсті көлденең бағандар (саны мен пайызы жазулы).
+  const svRows = () => (TS || []).filter((r) => (!TF.cls || r.cls === TF.cls) && inPer(dstr(new Date(r.t))));
+  function bars(items) { // items: [{label, w, text}]
+    return `<div class="bars">${items.map((it) => `<div class="br" title="${esc(it.label)}: ${it.text}"><span class="bl">${esc(it.label)}</span><span class="bt">${it.w > 0 ? `<i style="width:${it.w.toFixed(1)}%"></i>` : ''}</span><span class="bv">${it.text}</span></div>`).join('')}</div>`;
+  }
+  function svQuestion(q, rows) {
+    const ans = rows.map((r) => r.a && r.a[q.id]).filter((v) => v != null && v !== '');
+    if (q.type === 'text') {
+      if (!ans.length) return '';
+      return `<div class="card sq"><b>${esc(q.q)}</b><small>${ans.length} жауап · соңғылары</small><ul class="sqtext">${ans.slice(-30).reverse().map((v) => `<li>${esc(v)}</li>`).join('')}</ul></div>`;
+    }
+    const cnt = q.opts.map((o) => ans.filter((v) => v === o).length), max = Math.max(1, ...cnt);
+    const numeric = q.opts.every((o) => /^\d+$/.test(o));
+    const avg = numeric && ans.length ? (ans.reduce((a, v) => a + +v, 0) / ans.length).toFixed(1) : null;
+    return `<div class="card sq"><b>${esc(q.q)}</b><small>${ans.length} жауап${avg ? ' · орташа: ' + avg : ''}</small>` +
+      bars(q.opts.map((o, i) => { const pct = ans.length ? Math.round(100 * cnt[i] / ans.length) : 0; return { label: o, w: 100 * cnt[i] / max, text: cnt[i] + ' · ' + pct + '%' }; })) + '</div>';
+  }
+  function surveyReport(classes) {
+    if (TS === undefined) return '<p class="err">Сауалнама есебі әлі қосылмаған: Supabase-те survey_report.sql кодын іске қосыңыз да, «Жаңарту» басыңыз.</p>';
+    const rows = svRows(), st = rows.filter((r) => r.kind === 'start'), ls = rows.filter((r) => r.kind === 'lesson');
+    const sc = ls.filter((r) => r.score != null && r.stages && r.stages.total);
+    const acc = sc.length ? Math.round(100 * sc.reduce((a, r) => a + r.score / r.stages.total, 0) / sc.length) : null;
+    let h = `<div class="tsum"><div class="card"><b>${st.length}</b><span>алғашқы сауалнама</span></div><div class="card"><b>${ls.length}</b><span>сабақтан кейінгі сауалнама</span></div>
+      <div class="card"><b>${acc == null ? '—' : acc + '%'}</b><span>сабақта бірден дұрыс жауап (орташа)</span></div></div>`;
+    if (!TF.cls && st.length) {
+      const all = Array.from(new Set(classes.concat(st.map((r) => r.cls).filter(Boolean)))).sort((a, b) => (a === 'Басқа') - (b === 'Басқа') || a.localeCompare(b));
+      const list = all.map((c) => ({ c: c, n: st.filter((r) => r.cls === c).length }));
+      h += `<div class="card sq"><b>Сыныптар бойынша қатысу</b><small>алғашқы сауалнамаға жауап бергендер</small>` +
+        bars(list.map((x) => ({ label: x.c, w: 100 * x.n / Math.max(1, ...list.map((y) => y.n)), text: x.n + ' · ' + Math.round(100 * x.n / st.length) + '%' }))) + '</div>';
+    }
+    h += `<h3 class="sec">Алғашқы сауалнама<span>ойын алдында · ${st.length} жауап</span></h3>`;
+    h += st.length ? SURVEY.start.map((q) => svQuestion(q, st)).join('') : '<p class="note">Таңдалған кезеңде жауап жоқ.</p>';
+    h += `<h3 class="sec">Сабақтан кейінгі сауалнама<span>${ls.length} жауап</span></h3>`;
+    const v = sc.filter((r) => Array.isArray(r.stages.by_stage));
+    if (v.length) {
+      const by = STAGES.map((stg, i) => { const p = Math.round(100 * v.reduce((a, r) => a + (r.stages.by_stage[i] || 0) / 7, 0) / v.length); return { label: stg.name, w: p, text: p + '%' }; });
+      h += `<div class="card sq"><b>Кезеңдер бойынша бірден дұрыс жауап</b><small>ойын өзі есептеген · ${v.length} сабақ</small>${bars(by)}</div>`;
+    }
+    h += ls.length ? SURVEY.lesson.map((q) => svQuestion(q, ls)).join('') : '<p class="note">Таңдалған кезеңде жауап жоқ.</p>';
+    return h + `<div class="tfoot"><button class="btn primary" data-act="tr-csv">Excel-ге жүктеу (CSV)</button>
+      <p class="note">Сауалнама жасырын: жауаптарда тек сынып көрсетіледі. Сауалнаманы өткізіп жіберген оқушылар бұл санға кірмейді.</p></div>`;
+  }
+  function surveyCsv() {
+    const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const qs = SURVEY.start.concat(SURVEY.lesson);
+    const lines = [['Уақыты', 'Түрі', 'Сынып', 'Сабақ', 'Бірден дұрыс', 'Барлығы'].concat(qs.map((x) => x.q)).map(q).join(';')]
+      .concat(svRows().map((r) => [tfmt(new Date(r.t)), r.kind === 'start' ? 'алғашқы' : 'сабақтан кейін', r.cls, r.lesson, r.score, r.stages && r.stages.total].concat(qs.map((x) => (r.a || {})[x.id])).map(q).join(';')));
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'maqal-saualnama-' + (TF.cls || 'barlygy') + '-' + TF.per + '-' + today() + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
   }
   function teacherCsv() {
     const q = (v) => '"' + String(v).replace(/"/g, '""') + '"';
@@ -659,7 +717,7 @@
       else { TF.sort = d.k; TF.dir = ['name', 'cls'].includes(d.k) ? 1 : -1; }
       teacherView();
     },
-    'tr-csv'() { teacherCsv(); },
+    'tr-csv'() { if (TF.tab === 'survey') surveyCsv(); else teacherCsv(); },
     'tr-reload'() { teacherLoad(); }
   };
 
@@ -672,7 +730,11 @@
   document.addEventListener('submit', async (e) => {
     if (e.target.id !== 'lform') return;
     e.preventDefault();
-    const l = $('#lg').value.trim().toLowerCase(), p = $('#pw').value;
+    // Логин мен құпия сөз тек кіші латын әріптері мен сандардан тұрады. Оқушы пернетақтасы орыс/қазақ
+    // тілінде тұрса немесе телефон бас әріп қойса да кіре алсын: ұқсас әріптерді латынға ауыстырамыз.
+    const LAT = { а: 'a', ә: 'a', в: 'b', е: 'e', ё: 'e', к: 'k', қ: 'q', м: 'm', н: 'h', о: 'o', ө: 'o', р: 'p', с: 'c', т: 't', у: 'y', ү: 'u', ұ: 'u', х: 'x', һ: 'h', і: 'i', ғ: 'g', ң: 'n' };
+    const fix = (v) => v.trim().toLowerCase().replace(/\s+/g, '').replace(/[аәвеёкқмноөрстуүұхһіғң]/g, (c) => LAT[c] || c);
+    const l = fix($('#lg').value), p = fix($('#pw').value);
     const bad = 'Логин немесе құпия сөз қате.';
     const a = ACCOUNTS.find((x) => x.login.toLowerCase() === l);
     if (a) return a.pass === p ? login(a) : loginView(bad);
