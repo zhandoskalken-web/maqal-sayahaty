@@ -492,7 +492,10 @@
   // ═══════════════ Мұғалім беті ═══════════════
   // Мұғалім логинімен кіргенде: сынып оқушыларының прогресі (өз сыныбы немесе admin — барлығы).
   let TR = null;
-  const TF = { cls: '', per: 'all' };
+  const TF = { cls: '', per: 'all', sort: '', dir: 1 };
+  // Бағандар: [кілт, атауы, сұрыптау мәні]. Мәтін — А→Я, сандар — үлкенінен бастап.
+  const TCOLS = [['name', 'Оқушы', (r) => r.name], ['cls', 'Сынып', (r) => r.cls], ['les', 'Сабақ', (r) => r.les], ['prov', 'Мақал', (r) => r.prov],
+    ['xp', 'Ұпай', (r) => r.xp], ['lv', 'Деңгей', (r) => r.lvl], ['ex', 'Емтихандар (ең жақсы)', (r) => r.exSum], ['last', 'Соңғы белсенділік', (r) => (r.started && r.last ? r.last.getTime() : 0)]];
   const TPER = [['all', 'Барлық уақыт'], ['today', 'Бүгін'], ['week', 'Соңғы 7 күн'], ['month', 'Осы ай']];
   function teacherStart(acc) {
     me = { teacher: true, login: acc.login, name: acc.name, cls: acc.cls || null, token: acc.token };
@@ -518,14 +521,22 @@
     return true;
   }
   function trRows() {
-    return TR.filter((p) => !TF.cls || p.cls === TF.cls).map((p) => {
+    const rows = TR.filter((p) => !TF.cls || p.cls === TF.cls).map((p) => {
       const d = p.data || {}, log = d.log || {};
       let les = 0, prov = 0, xp = 0;
       if (TF.per === 'all') { les = Object.keys(d.days || {}).length; prov = les * 7; xp = d.xp || 0; }
       else Object.keys(log).filter(inPer).forEach((k) => { les += log[k].les || 0; prov += log[k].prov || 0; xp += log[k].xp || 0; });
       const ex = Object.keys(d.exams || {}).sort((a, b) => a - b).map((w) => (+w + 1) + '-апта: ' + d.exams[w].best + '%');
-      return { name: p.name, login: p.login, cls: p.cls, les: les, prov: prov, xp: xp, lv: p.data ? level(d.xp || 0).name : '—', ex: ex.join(', '), last: p.updated ? new Date(p.updated) : null, started: !!p.data };
-    }).sort((a, b) => a.cls.localeCompare(b.cls) || b.xp - a.xp || a.name.localeCompare(b.name));
+      const exSum = Object.keys(d.exams || {}).reduce((a, w) => a + (d.exams[w].best || 0), 0);
+      return { name: p.name, login: p.login, cls: p.cls, les: les, prov: prov, xp: xp, lv: p.data ? level(d.xp || 0).name : '—', lvl: p.data ? d.xp || 0 : -1, ex: ex.join(', '), exSum: exSum, last: p.updated ? new Date(p.updated) : null, started: !!p.data };
+    });
+    const col = TCOLS.find((c) => c[0] === TF.sort);
+    if (!col) return rows.sort((a, b) => a.cls.localeCompare(b.cls) || b.xp - a.xp || a.name.localeCompare(b.name, 'kk'));
+    return rows.sort((a, b) => {
+      const x = col[2](a), y = col[2](b);
+      const c = typeof x === 'string' ? x.localeCompare(y, 'kk') : x - y;
+      return c * TF.dir || a.name.localeCompare(b.name, 'kk');
+    });
   }
   const tfmt = (dt) => (dt ? pad(dt.getDate()) + '.' + pad(dt.getMonth() + 1) + ' ' + pad(dt.getHours()) + ':' + pad(dt.getMinutes()) : '—');
   function teacherView() {
@@ -540,7 +551,7 @@
       <div class="svopts">${TPER.map((p) => chip('per', p[0], p[1])).join('')}</div>
       <div class="tsum"><div class="card"><b>${rows.length}</b><span>оқушы</span></div><div class="card"><b>${started}</b><span>сайтқа кірді</span></div>
         <div class="card"><b>${active}</b><span>сабақ өтті · ${esc(perName)}</span></div><div class="card"><b>${avg}</b><span>бір оқушыға орташа сабақ</span></div></div>
-      <div class="twrap"><table class="ttab"><thead><tr><th>№</th><th>Оқушы</th><th>Сынып</th><th>Сабақ</th><th>Мақал</th><th>Ұпай</th><th>Деңгей</th><th>Емтихандар (ең жақсы)</th><th>Соңғы белсенділік</th></tr></thead><tbody>
+      <div class="twrap"><table class="ttab"><thead><tr><th>№</th>${TCOLS.map((c) => `<th class="srt${TF.sort === c[0] ? ' on' : ''}" data-act="tr-sort" data-k="${c[0]}" title="Сұрыптау">${c[1]}<i>${TF.sort === c[0] ? (TF.dir > 0 ? '▲' : '▼') : '⇅'}</i></th>`).join('')}</tr></thead><tbody>
       ${rows.map((r, i) => `<tr class="${r.started ? '' : 'off'}"><td>${i + 1}</td><td><b>${esc(r.name)}</b><small>${esc(r.login)}</small></td><td>${esc(r.cls)}</td><td>${r.les}</td><td>${r.prov}</td><td>${r.xp}</td><td>${r.lv}</td><td>${esc(r.ex || '—')}</td><td>${r.started ? tfmt(r.last) : 'кірмеген'}</td></tr>`).join('')}
       </tbody></table></div>
       <div class="tfoot"><button class="btn primary" data-act="tr-csv">Excel-ге жүктеу (CSV)</button>
@@ -643,6 +654,11 @@
     },
     logout() { if (confirm('Аккаунттан шығасың ба?')) { if (synced()) push(); store.del('session'); me = null; U = null; RANK = null; TR = null; document.body.classList.remove('teacher'); loginView(); } },
     'tr-f'(d) { TF[d.k] = d.v; teacherView(); },
+    'tr-sort'(d) { // бір басу — сұрыптау, қайта басу — кері рет
+      if (TF.sort === d.k) TF.dir = -TF.dir;
+      else { TF.sort = d.k; TF.dir = ['name', 'cls'].includes(d.k) ? 1 : -1; }
+      teacherView();
+    },
     'tr-csv'() { teacherCsv(); },
     'tr-reload'() { teacherLoad(); }
   };
