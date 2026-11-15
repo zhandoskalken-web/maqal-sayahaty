@@ -266,3 +266,27 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 .opt.sv { width: auto; min-width: 46px; text-align: center; padding: 9px 13px; font-size: 15px; }
 .opt.sv.on { border-color: var(--teal); background: var(--teal); color: #fff; }
 .svq textarea { width: 100%; box-sizing: border-box; border: 2px solid var(--line); border-radius: 12px; padding: 10px; font: inherit; font-size: 15px; resize: vertical; }
+
+/* жүктелу */
+.loading { min-height: 60vh; display: flex; align-items: center; justify-content: center; color: var(--muted); font-weight: 700; }
+
+/* мұғалім беті */
+body.teacher #app { max-width: 1100px; }
+.tview { padding: 16px 14px 30px; }
+.thead { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.thead div { flex: 1; }
+.thead small { color: var(--muted); font-weight: 700; }
+.thead h2 { margin: 2px 0 0; font-size: 20px; color: var(--navy); }
+.tview .svopts { margin-bottom: 10px; }
+.tsum { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 6px 0 14px; }
+.tsum .card { padding: 10px 12px; }
+.tsum b { display: block; font-size: 24px; color: var(--navy); }
+.tsum span { font-size: 13px; color: var(--muted); }
+.twrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+.ttab { border-collapse: collapse; width: 100%; font-size: 14px; }
+.ttab th { position: sticky; top: 0; background: var(--navy); color: #fff; text-align: left; padding: 9px 10px; font-size: 12.5px; white-space: nowrap; }
+.ttab td { padding: 8px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+.ttab td small { display: block; color: var(--muted); font-size: 12px; }
+.ttab tr.off td { color: var(--muted); }
+.ttab td:nth-child(n+4):nth-child(-n+6) { text-align: right; font-variant-numeric: tabular-nums; }
+.tfoot { margin-top: 14px; }

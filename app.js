@@ -54,7 +54,7 @@
   const blank = () => ({ xp: 0, asyk: 0, asykTotal: 0, streak: 0, bestStreak: 0, lastDay: null, days: {}, exams: {}, log: {}, owned: {} });
   const loadUser = (login) => Object.assign(blank(), store.get('u.' + login) || {});
   let me = null, U = null;
-  const save = () => store.set('u.' + me.login, U);
+  const save = () => { store.set('u.' + me.login, U); pushSoon(); };
 
   function addLog(xp, prov) {
     const l = U.log[today()] || (U.log[today()] = { xp: 0, prov: 0, les: 0 });
@@ -162,19 +162,31 @@
     },
 
     rank() {
-      const accs = ACCOUNTS.filter((a) => !a.demo || a.login === me.login);
-      if (!accs.some((a) => a.login === me.login)) accs.push(me);
-      const all = accs.map((a) => {
-        const u = a.login === me.login ? U : store.get('u.' + a.login);
-        return { a: a, xp: u ? u.xp : 0, prov: u ? Object.keys(u.days || {}).length * 7 : 0 };
-      }).sort((x, y) => y.xp - x.xp || y.prov - x.prov);
-      const list = (rows, title) => {
-        const pos = rows.findIndex((r) => r.a.login === me.login) + 1;
-        return `<h3 class="sec">${title}<span>${pos ? 'сенің орның: ' + pos : ''}</span></h3><div class="card rank">${rows.map((r, i) =>
-          `<div class="rr${r.a.login === me.login ? ' me' : ''}"><i>${i < 3 ? em(['🥇', '🥈', '🥉'][i]) : i + 1}</i><div><b>${esc(r.a.name)}</b><span>${esc(r.a.cls)} · ${r.prov} мақал</span></div><em>${r.xp}</em></div>`).join('')}</div>`;
+      const isMe = (r) => r.me;
+      let rows, note;
+      if (synced()) { // ортақ рейтинг серверден
+        if (!RANK) { loadRank(); return '<p class="note">Рейтинг жүктелуде…</p>'; }
+        if (Date.now() - RANK_T > 20000) loadRank();
+        rows = RANK.map((r) => (r.me ? { name: me.name, cls: me.cls, xp: U.xp, prov: doneDays() * 7, me: true } : { name: r.name, cls: r.cls, xp: r.xp, prov: r.lessons * 7 }));
+        note = 'Рейтинг барлық 7–8-сынып оқушыларын көрсетеді.';
+      } else { // demo: тек осы құрылғы
+        const accs = ACCOUNTS.filter((a) => !a.demo || a.login === me.login);
+        if (!accs.some((a) => a.login === me.login)) accs.push(me);
+        rows = accs.map((a) => {
+          const u = a.login === me.login ? U : store.get('u.' + a.login);
+          return { name: a.name, cls: a.cls, xp: u ? u.xp : 0, prov: u ? Object.keys(u.days || {}).length * 7 : 0, me: a.login === me.login };
+        });
+        note = 'Демо аккаунтта рейтинг тек осы құрылғыны көрсетеді. Жеке логинмен кірсең, барлық оқушымен жарысасың.';
+      }
+      rows.sort((x, y) => y.xp - x.xp || y.prov - x.prov);
+      const list = (all, title, limit) => {
+        const pos = all.findIndex(isMe) + 1;
+        let shown = all.map((r, i) => [r, i]);
+        if (limit && all.length > limit) { shown = shown.slice(0, limit); if (pos > limit) shown.push([all[pos - 1], pos - 1]); }
+        return `<h3 class="sec">${title}<span>${pos ? 'сенің орның: ' + pos + ' / ' + all.length : ''}</span></h3><div class="card rank">${shown.map(([r, i]) =>
+          `<div class="rr${r.me ? ' me' : ''}"><i>${i < 3 ? em(['🥇', '🥈', '🥉'][i]) : i + 1}</i><div><b>${esc(r.name)}</b><span>${esc(r.cls)} · ${r.prov} мақал</span></div><em>${r.xp}</em></div>`).join('')}</div>`;
       };
-      return list(all.filter((r) => r.a.cls === me.cls), 'Сыныбым · ' + esc(me.cls)) + list(all, 'Жалпы рейтинг') +
-        '<p class="note">Прототипте рейтинг тек осы құрылғыда ойнаған оқушыларды көрсетеді. Сервер қосылғанда барлық сынып пен мектеп бір рейтингке бірігеді.</p>';
+      return list(rows.filter((r) => r.cls === me.cls), 'Сыныбым · ' + esc(me.cls)) + list(rows, 'Жалпы рейтинг', 10) + `<p class="note">${note}</p>`;
     },
 
     veh() {
@@ -397,6 +409,47 @@
     const t = await r.text();
     return t ? JSON.parse(t) : null;
   }
+  // ═══════════════ Прогресті серверде сақтау ═══════════════
+  // Әр сабақ/емтихан/сатып алудан кейін прогресс оқушының логинімен серверге жазылады.
+  // Кіргенде сервердегі мен телефондағы прогрестің қайсысы алда болса, сол алынады.
+  const synced = () => !!(ONLINE && me && me.token && !me.teacher);
+  let syncT = null, syncing = false, RANK = null, RANK_T = 0;
+  function pushSoon() {
+    if (!synced()) return;
+    store.set('dirty.' + me.login, true);
+    clearTimeout(syncT); syncT = setTimeout(push, 800);
+  }
+  async function push() {
+    if (!synced() || syncing) return;
+    syncing = true;
+    const who = me.login;
+    try {
+      const ok = await api('rpc/save_progress', { p_token: me.token, p_data: U });
+      if (ok === false) return relogin();
+      if (me && me.login === who) store.del('dirty.' + who);
+    } catch (e) { /* интернет жоқ: келесі сақтауда немесе кіргенде жіберіледі */ } finally { syncing = false; }
+  }
+  const pscore = (u) => Object.keys((u && u.days) || {}).length * 1e6 + ((u && u.xp) || 0);
+  async function pull() {
+    const r = await api('rpc/load_progress', { p_token: me.token });
+    if (!r) return relogin();
+    const srv = r.data;
+    if (srv && pscore(srv) > pscore(U)) { U = Object.assign(blank(), srv); store.set('u.' + me.login, U); store.del('dirty.' + me.login); return; }
+    if (!srv || pscore(U) > pscore(srv) || store.get('dirty.' + me.login)) await push();
+  }
+  async function loadRank() {
+    try {
+      const r = await api('rpc/get_rank', { p_token: me.token });
+      if (!r) return relogin();
+      RANK = r; RANK_T = Date.now();
+      if (view === 'rank' && !S && !SV && me && !document.body.classList.contains('playing')) go('rank');
+    } catch (e) { RANK_T = Date.now(); }
+  }
+  function relogin() {
+    store.del('session'); me = null; U = null; RANK = null;
+    loginView('Логин мен құпия сөзіңді қайта енгіз.');
+  }
+
   const svCls = () => (me.demo ? store.get('survey.cls') || '' : me.cls);
   function surveyView() {
     const askCls = me.demo, n0 = askCls ? 2 : 1;
@@ -436,6 +489,73 @@
     }
   }
 
+  // ═══════════════ Мұғалім беті ═══════════════
+  // Мұғалім логинімен кіргенде: сынып оқушыларының прогресі (өз сыныбы немесе admin — барлығы).
+  let TR = null;
+  const TF = { cls: '', per: 'all' };
+  const TPER = [['all', 'Барлық уақыт'], ['today', 'Бүгін'], ['week', 'Соңғы 7 күн'], ['month', 'Осы ай']];
+  function teacherStart(acc) {
+    me = { teacher: true, login: acc.login, name: acc.name, cls: acc.cls || null, token: acc.token };
+    U = null; store.set('session', me); TF.cls = me.cls || '';
+    document.body.classList.add('playing', 'teacher'); tabsEl.hidden = true;
+    teacherLoad();
+  }
+  async function teacherLoad() {
+    app.innerHTML = '<div class="loading">Нәтижелер жүктелуде…</div>';
+    try {
+      const r = await api('rpc/teacher_report', { p_token: me.token });
+      if (!r) { document.body.classList.remove('teacher'); return relogin(); }
+      TR = r; teacherView();
+    } catch (e) {
+      app.innerHTML = '<div class="tview"><p class="err">Серверге қосылу мүмкін болмады.</p><button class="btn" data-act="tr-reload">Қайта көру</button> <button class="btn" data-act="logout">Шығу</button></div>';
+    }
+  }
+  function inPer(ds) {
+    const t = today();
+    if (TF.per === 'today') return ds === t;
+    if (TF.per === 'week') return ds > dstr(new Date(Date.now() - 7 * 864e5));
+    if (TF.per === 'month') return ds.slice(0, 7) === t.slice(0, 7);
+    return true;
+  }
+  function trRows() {
+    return TR.filter((p) => !TF.cls || p.cls === TF.cls).map((p) => {
+      const d = p.data || {}, log = d.log || {};
+      let les = 0, prov = 0, xp = 0;
+      if (TF.per === 'all') { les = Object.keys(d.days || {}).length; prov = les * 7; xp = d.xp || 0; }
+      else Object.keys(log).filter(inPer).forEach((k) => { les += log[k].les || 0; prov += log[k].prov || 0; xp += log[k].xp || 0; });
+      const ex = Object.keys(d.exams || {}).sort((a, b) => a - b).map((w) => (+w + 1) + '-апта: ' + d.exams[w].best + '%');
+      return { name: p.name, login: p.login, cls: p.cls, les: les, prov: prov, xp: xp, lv: p.data ? level(d.xp || 0).name : '—', ex: ex.join(', '), last: p.updated ? new Date(p.updated) : null, started: !!p.data };
+    }).sort((a, b) => a.cls.localeCompare(b.cls) || b.xp - a.xp || a.name.localeCompare(b.name));
+  }
+  const tfmt = (dt) => (dt ? pad(dt.getDate()) + '.' + pad(dt.getMonth() + 1) + ' ' + pad(dt.getHours()) + ':' + pad(dt.getMinutes()) : '—');
+  function teacherView() {
+    const rows = trRows(), classes = Array.from(new Set(TR.map((p) => p.cls))).sort();
+    const started = rows.filter((r) => r.started).length, active = rows.filter((r) => r.les > 0).length;
+    const avg = rows.length ? (rows.reduce((a, r) => a + r.les, 0) / rows.length).toFixed(1) : 0;
+    const perName = TPER.find((p) => p[0] === TF.per)[1].toLowerCase();
+    const chip = (k, v, label) => `<button type="button" class="opt sv${TF[k] === v ? ' on' : ''}" data-act="tr-f" data-k="${k}" data-v="${esc(v)}">${esc(label)}</button>`;
+    app.innerHTML = `<div class="tview">
+      <header class="thead"><div><small>Мұғалім беті · ${esc(APP_NAME)}</small><h2>${esc(me.name)}</h2></div><button class="btn sm" data-act="tr-reload">Жаңарту</button><button class="btn sm" data-act="logout">Шығу</button></header>
+      ${me.cls ? '' : `<div class="svopts">${chip('cls', '', 'Барлық сынып')}${classes.map((c) => chip('cls', c, c)).join('')}</div>`}
+      <div class="svopts">${TPER.map((p) => chip('per', p[0], p[1])).join('')}</div>
+      <div class="tsum"><div class="card"><b>${rows.length}</b><span>оқушы</span></div><div class="card"><b>${started}</b><span>сайтқа кірді</span></div>
+        <div class="card"><b>${active}</b><span>сабақ өтті · ${esc(perName)}</span></div><div class="card"><b>${avg}</b><span>бір оқушыға орташа сабақ</span></div></div>
+      <div class="twrap"><table class="ttab"><thead><tr><th>№</th><th>Оқушы</th><th>Сынып</th><th>Сабақ</th><th>Мақал</th><th>Ұпай</th><th>Деңгей</th><th>Емтихандар (ең жақсы)</th><th>Соңғы белсенділік</th></tr></thead><tbody>
+      ${rows.map((r, i) => `<tr class="${r.started ? '' : 'off'}"><td>${i + 1}</td><td><b>${esc(r.name)}</b><small>${esc(r.login)}</small></td><td>${esc(r.cls)}</td><td>${r.les}</td><td>${r.prov}</td><td>${r.xp}</td><td>${r.lv}</td><td>${esc(r.ex || '—')}</td><td>${r.started ? tfmt(r.last) : 'кірмеген'}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="tfoot"><button class="btn primary" data-act="tr-csv">Excel-ге жүктеу (CSV)</button>
+        <p class="note">Сабақ, мақал және ұпай таңдалған кезең бойынша есептеледі. «Кірмеген» — жеке логинмен әлі кірмеген оқушы. Нәтиже оқушы әр сабақты бітірген сайын жаңарады; бетті жаңарту үшін «Жаңарту» батырмасын басыңыз.</p></div></div>`;
+  }
+  function teacherCsv() {
+    const q = (v) => '"' + String(v).replace(/"/g, '""') + '"';
+    const lines = [['Оқушы', 'Логин', 'Сынып', 'Сабақ', 'Мақал', 'Ұпай', 'Деңгей', 'Емтихандар', 'Соңғы белсенділік'].map(q).join(';')]
+      .concat(trRows().map((r) => [r.name, r.login, r.cls, r.les, r.prov, r.xp, r.lv, r.ex, r.started ? tfmt(r.last) : 'кірмеген'].map(q).join(';')));
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'maqal-natizheler-' + (TF.cls || 'barlygy') + '-' + TF.per + '-' + today() + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
   // ═══════════════ Кіру ═══════════════
   function loginView(msg) {
     document.body.classList.add('playing'); tabsEl.hidden = true;
@@ -450,9 +570,17 @@
         <p class="hint">Логин мен құпия сөзді мұғалімің береді.</p>
       </form></div>`;
   }
-  function login(acc) {
-    me = { login: acc.login, name: acc.name, cls: acc.cls, demo: !!acc.demo }; U = loadUser(me.login);
+  async function login(acc) {
+    if (acc.teacher) return teacherStart(acc);
+    me = { login: acc.login, name: acc.name, cls: acc.cls, demo: !!acc.demo, token: acc.token || null }; U = loadUser(me.login);
+    RANK = null;
+    if (!me.demo && ONLINE && !me.token) return relogin(); // ескі нұсқадағы сессия: бір рет қайта кіру керек
     store.set('session', me);
+    if (synced()) {
+      app.innerHTML = '<div class="loading">Жүктелуде…</div>';
+      try { await pull(); } catch (e) { /* интернет жоқ: телефондағы прогреспен жалғастырамыз */ }
+      if (!me) return;
+    }
     if (SURVEY_ON && SURVEY.start && SURVEY.start.length && !U.startSurvey) {
       SV = { kind: 'start', qs: SURVEY.start, cls: svCls(), a: {} };
       return surveyView();
@@ -513,7 +641,10 @@
       U.asyk -= s.price; U.owned[s.id] = today(); save();
       toast(s.name + ' — сенікі!'); go('veh');
     },
-    logout() { if (confirm('Аккаунттан шығасың ба?')) { store.del('session'); me = null; U = null; loginView(); } }
+    logout() { if (confirm('Аккаунттан шығасың ба?')) { if (synced()) push(); store.del('session'); me = null; U = null; RANK = null; TR = null; document.body.classList.remove('teacher'); loginView(); } },
+    'tr-f'(d) { TF[d.k] = d.v; teacherView(); },
+    'tr-csv'() { teacherCsv(); },
+    'tr-reload'() { teacherLoad(); }
   };
 
   document.addEventListener('click', (e) => {
@@ -533,7 +664,10 @@
     const btn = $('#lform button'); btn.disabled = true; btn.textContent = 'ТЕКСЕРІЛУДЕ…';
     try {
       const r = await api('rpc/pupil_login', { p_login: l, p_pass: p });
-      if (r && r.login) login(r); else loginView(bad);
+      if (r && r.login) return login(r);
+      const t = await api('rpc/teacher_login', { p_login: l, p_pass: p });
+      if (t && t.login) return teacherStart(t);
+      loginView(bad);
     } catch (err) { loginView('Серверге қосылу мүмкін болмады. Интернетті тексеріп, қайта байқап көр.'); }
   });
 
@@ -541,6 +675,7 @@
   document.title = APP_NAME;
   let sess = store.get('session');
   if (typeof sess === 'string') sess = ACCOUNTS.find((a) => a.login === sess); // ескі нұсқадан қалған сессия
-  if (sess && sess.login) login(sess); else loginView();
+  if (sess && sess.teacher && sess.token) teacherStart(sess);
+  else if (sess && sess.login) login(sess); else loginView();
   svFlush();
 })();
