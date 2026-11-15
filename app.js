@@ -218,8 +218,11 @@
 
   function mapSvg(ri) {
     const P = (r) => [((r.lon - MAP.lon0) * MAP.kx).toFixed(1), ((MAP.lat1 - r.lat) * MAP.ky).toFixed(1)];
-    const pts = ROUTE.map(P), all = pts.map((p) => p.join(',')).join(' ');
-    const done = pts.slice(0, ri + 1).map((p) => p.join(',')).join(' ');
+    const pts = ROUTE.map(P);
+    // Қалалар арасындағы жол автожолдарға ұқсас аралық нүктелер (via) арқылы өтеді
+    const line = (n) => ROUTE.slice(0, n + 1).flatMap((r, i) =>
+      (i ? (r.via || []).map((v) => P({ lat: v[0], lon: v[1] })) : []).concat([pts[i]])).map((p) => p.join(',')).join(' ');
+    const all = line(ROUTE.length - 1), done = line(ri);
     const v = VEHICLES[ROUTE[ri].veh], cur = pts[ri];
     const seen = {};
     const dots = ROUTE.map((r, i) => {
